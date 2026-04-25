@@ -63,7 +63,7 @@
 ```bash
 /isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py \
   --headless \
-  --checkpoint outputs/quadruped_rough_baseline/.../model_200.pt \
+  --checkpoint outputs/quadruped_rough_baseline/.../<run_name>/checkpoints/model_200.pt \
   --num_envs 8 \
   --num_episodes 8 \
   --video_folder outputs/quadruped_rough_baseline/eval_videos/run_200 \
@@ -72,3 +72,21 @@
   --seed 42
 ```
 
+```
+  /isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py \
+    --task Template-Amadeus-Quadruped-Rough-Play-v0 \
+    --checkpoint /workspace/amadeus/amadeus/outputs/quadruped_rough_baseline/rsl_rl/amadeus_quadruped_rough/2026-04-24_08-22-54/checkpoints/model_1499.pt \
+    --headless \
+    --num_envs 1 \
+    --num_episodes 6 \
+    --video_folder outputs/quadruped_rough_baseline/rsl_rl/eval_video_follow_marker \
+    --video_start_step 20 \
+    --video_length 220 \
+    --video_interval_steps 260 \
+    --max_video_clips 6 \
+    --follow_robot_camera \
+    --camera_offset 3.0 3.0 2.0 \
+    --show_velocity_markers \
+    --velocity_marker_scale 3.0 \
+    --velocity_marker_height 0.5
+```

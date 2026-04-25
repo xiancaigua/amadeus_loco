@@ -49,7 +49,7 @@
 ```
 
 执行过程中的关键产物（清理前确认存在）：
-- `model_0.pt`
+- `checkpoints/model_0.pt`
 - `datasets/train/train_dataset_*.hdf5`
 - `datasets/eval/eval_rollouts_0000.hdf5`
 - `metrics/train_metrics.csv/jsonl`

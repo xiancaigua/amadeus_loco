@@ -86,7 +86,16 @@ def _resolve_resume_path(log_root_path: str, agent_cfg: RslRlBaseRunnerCfg) -> s
         return None
     if args_cli.checkpoint:
         return args_cli.checkpoint
-    return get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    try:
+        return get_checkpoint_path(
+            log_root_path,
+            agent_cfg.load_run,
+            agent_cfg.load_checkpoint,
+            other_dirs=["checkpoints"],
+        )
+    except ValueError:
+        # Backward compatibility with older run layout where checkpoints lived in run root.
+        return get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
 
 def _make_run_dir(agent_cfg: RslRlBaseRunnerCfg) -> tuple[str, str]:
@@ -95,14 +104,28 @@ def _make_run_dir(agent_cfg: RslRlBaseRunnerCfg) -> tuple[str, str]:
     if args_cli.resume and args_cli.load_run:
         return log_root_path, os.path.join(log_root_path, args_cli.load_run)
 
-    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M")
     if agent_cfg.run_name:
         run_name += f"_{agent_cfg.run_name}"
     return log_root_path, os.path.join(log_root_path, run_name)
 
 
-def _latest_checkpoint_path(run_dir: str, current_iteration: int) -> str:
-    return os.path.join(run_dir, f"model_{current_iteration}.pt")
+def _build_run_paths(run_dir: str) -> dict[str, str]:
+    return {
+        "checkpoints": os.path.join(run_dir, "checkpoints"),
+        "tensorboard": os.path.join(run_dir, "tensorboard"),
+        "metrics": os.path.join(run_dir, "metrics"),
+        "datasets_train": os.path.join(run_dir, "datasets", "train"),
+        "datasets_eval": os.path.join(run_dir, "datasets", "eval"),
+        "videos_train": os.path.join(run_dir, "videos", "train"),
+        "videos_eval": os.path.join(run_dir, "videos", "eval"),
+        "params": os.path.join(run_dir, "params"),
+        "logs": os.path.join(run_dir, "logs"),
+    }
+
+
+def _latest_checkpoint_path(checkpoint_dir: str, current_iteration: int) -> str:
+    return os.path.join(checkpoint_dir, f"model_{current_iteration}.pt")
 
 
 def _run_periodic_eval(run_dir: str, checkpoint_path: str, iteration: int):
@@ -174,23 +197,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     ChunkedHDF5DatasetFileHandler.max_episodes_per_file = args_cli.dataset_chunk_episodes
 
     log_root_path, run_dir = _make_run_dir(agent_cfg)
+    run_paths = _build_run_paths(run_dir)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     print(f"Exact experiment name requested from command line: {os.path.basename(run_dir)}")
 
-    dataset_dir = os.path.join(run_dir, "datasets", "train")
-    metrics_dir = os.path.join(run_dir, "metrics")
-    ensure_dir(dataset_dir)
-    ensure_dir(metrics_dir)
-    ensure_dir(os.path.join(run_dir, "videos"))
+    for path in run_paths.values():
+        ensure_dir(path)
 
     env_cfg.log_dir = run_dir
-    env_cfg.recorders.dataset_export_dir_path = dataset_dir
+    env_cfg.recorders.dataset_export_dir_path = run_paths["datasets_train"]
     env_cfg.recorders.dataset_filename = "train_dataset"
 
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if args_cli.video:
         video_kwargs = {
-            "video_folder": os.path.join(run_dir, "videos", "train"),
+            "video_folder": run_paths["videos_train"],
             "step_trigger": lambda step: step % args_cli.video_interval == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,
@@ -200,10 +221,35 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_dir, device=agent_cfg.device)
+    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_paths["tensorboard"], device=agent_cfg.device)
+
+    # Keep TensorBoard in run_dir/tensorboard and force checkpoints into run_dir/checkpoints.
+    original_save = runner.save
+
+    def save_with_checkpoint_redirect(path: str, infos: dict | None = None):
+        file_name = os.path.basename(path)
+        target_path = path
+        if file_name.startswith("model_") and file_name.endswith(".pt"):
+            target_path = os.path.join(run_paths["checkpoints"], file_name)
+        return original_save(target_path, infos)
+
+    runner.save = save_with_checkpoint_redirect
+
+    # Keep RSL-RL git/code-state snapshots under run_dir/logs/git.
+    original_store_code_state = runner.logger._store_code_state
+
+    def store_code_state_in_logs():
+        original_log_dir = runner.logger.log_dir
+        try:
+            runner.logger.log_dir = run_paths["logs"]
+            return original_store_code_state()
+        finally:
+            runner.logger.log_dir = original_log_dir
+
+    runner.logger._store_code_state = store_code_state_in_logs
     runner.add_git_repo_to_log(__file__)
 
-    metrics_writer = MetricsWriter(metrics_dir)
+    metrics_writer = MetricsWriter(run_paths["metrics"])
     original_log = runner.logger.log
 
     def wrapped_log(*, it, start_it, total_it, collect_time, learn_time, loss_dict, learning_rate, action_std,
@@ -241,8 +287,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
         runner.load(resume_path)
         runner.current_learning_iteration += 1
 
-    dump_yaml(os.path.join(run_dir, "params", "env.yaml"), env_cfg)
-    dump_yaml(os.path.join(run_dir, "params", "agent.yaml"), agent_cfg)
+    dump_yaml(os.path.join(run_paths["params"], "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(run_paths["params"], "agent.yaml"), agent_cfg)
 
     start_time = time.time()
     remaining = agent_cfg.max_iterations - runner.current_learning_iteration
@@ -253,7 +299,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
         runner.learn(num_learning_iterations=chunk, init_at_random_ep_len=init_random_ep_len)
         if getattr(runner.logger, "writer", None) is not None and hasattr(runner.logger.writer, "close"):
             runner.logger.writer.close()
-        checkpoint_path = _latest_checkpoint_path(run_dir, runner.current_learning_iteration)
+        checkpoint_path = _latest_checkpoint_path(run_paths["checkpoints"], runner.current_learning_iteration)
         _run_periodic_eval(run_dir, checkpoint_path, runner.current_learning_iteration)
         remaining = agent_cfg.max_iterations - (runner.current_learning_iteration + 1)
         init_random_ep_len = False

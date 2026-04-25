@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import os
+from pathlib import Path
 
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers.recorder_manager import DatasetExportMode
@@ -23,9 +24,19 @@ from .config import (
 from .recorders import AmadeusOfflineRecorderManagerCfg
 
 LOCAL_ASSETS_ROOT_ENV_VAR = "AMADEUS_ISAACLAB_ASSETS_ROOT"
-DEFAULT_LOCAL_ASSETS_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../../../../..", "assets", "isaaclab_data")
-)
+
+
+def _find_default_local_assets_root() -> str | None:
+    """Search upward for a project-local `assets/isaaclab_data` directory."""
+    file_path = Path(__file__).resolve()
+    for parent in file_path.parents:
+        candidate = parent / "assets" / "isaaclab_data"
+        if candidate.is_dir():
+            return str(candidate)
+    return None
+
+
+DEFAULT_LOCAL_ASSETS_ROOT = _find_default_local_assets_root()
 
 
 def _resolve_local_assets_root() -> str | None:
@@ -33,7 +44,7 @@ def _resolve_local_assets_root() -> str | None:
     env_root = os.getenv(LOCAL_ASSETS_ROOT_ENV_VAR)
     if env_root:
         return os.path.abspath(env_root)
-    return DEFAULT_LOCAL_ASSETS_ROOT if os.path.isdir(DEFAULT_LOCAL_ASSETS_ROOT) else None
+    return DEFAULT_LOCAL_ASSETS_ROOT if DEFAULT_LOCAL_ASSETS_ROOT and os.path.isdir(DEFAULT_LOCAL_ASSETS_ROOT) else None
 
 
 def _maybe_override_anymal_assets_with_local_paths(env_cfg) -> None:
@@ -41,6 +52,8 @@ def _maybe_override_anymal_assets_with_local_paths(env_cfg) -> None:
 
     Expected directory layout under the resolved root:
     - Robots/ANYbotics/ANYmal-C/anymal_c.usd
+    - Robots/ANYbotics/ANYmal-C/materials/
+      - base.jpg, drive.jpg, foot.jpg, thigh.jpg, shank.jpg, hip.jpg
     - ActuatorNets/ANYbotics/anydrive_3_lstm_jit.pt
     """
     assets_root = _resolve_local_assets_root()
@@ -49,22 +62,46 @@ def _maybe_override_anymal_assets_with_local_paths(env_cfg) -> None:
 
     local_robot_usd = os.path.join(assets_root, "Robots", "ANYbotics", "ANYmal-C", "anymal_c.usd")
     local_actuator_net = os.path.join(assets_root, "ActuatorNets", "ANYbotics", "anydrive_3_lstm_jit.pt")
+    local_materials_dir = os.path.join(assets_root, "Robots", "ANYbotics", "ANYmal-C", "materials")
+    required_material_files = [
+        os.path.join(local_materials_dir, "base.jpg"),
+        os.path.join(local_materials_dir, "drive.jpg"),
+        os.path.join(local_materials_dir, "foot.jpg"),
+        os.path.join(local_materials_dir, "thigh.jpg"),
+        os.path.join(local_materials_dir, "shank.jpg"),
+        os.path.join(local_materials_dir, "hip.jpg"),
+    ]
 
     missing_paths = [path for path in (local_robot_usd, local_actuator_net) if not os.path.isfile(path)]
+    if not os.path.isdir(local_materials_dir):
+        missing_paths.append(local_materials_dir)
+    else:
+        missing_paths.extend(path for path in required_material_files if not os.path.isfile(path))
     if missing_paths:
         if os.getenv(LOCAL_ASSETS_ROOT_ENV_VAR):
             # Explicit override should fail fast to avoid silently falling back to remote assets.
             raise FileNotFoundError(
-                "Local asset override was requested via "
-                f"{LOCAL_ASSETS_ROOT_ENV_VAR}={assets_root}, but required files are missing: {missing_paths}"
+                "Local ANYmal asset override was requested, but required files are missing.\n"
+                f"- {LOCAL_ASSETS_ROOT_ENV_VAR}: {assets_root}\n"
+                f"- Missing paths: {missing_paths}\n"
+                "Expected structure under assets root:\n"
+                "  Robots/ANYbotics/ANYmal-C/anymal_c.usd\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/base.jpg\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/drive.jpg\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/foot.jpg\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/thigh.jpg\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/shank.jpg\n"
+                "  Robots/ANYbotics/ANYmal-C/materials/hip.jpg\n"
+                "  ActuatorNets/ANYbotics/anydrive_3_lstm_jit.pt"
             )
         # Default cache path is optional; if not fully available, keep upstream behavior.
         return
 
-    print(
-        "[INFO] Using local ANYmal assets from: "
-        f"{assets_root} (set {LOCAL_ASSETS_ROOT_ENV_VAR} to override explicitly)."
-    )
+    print("[INFO] Using local ANYmal assets.")
+    print(f"       assets_root  : {assets_root} (set {LOCAL_ASSETS_ROOT_ENV_VAR} to override explicitly).")
+    print(f"       robot_usd    : {local_robot_usd}")
+    print(f"       actuator_net : {local_actuator_net}")
+    print(f"       materials_dir: {local_materials_dir}")
     env_cfg.scene.robot.spawn.usd_path = local_robot_usd
     legs_actuator = env_cfg.scene.robot.actuators.get("legs", None)
     if legs_actuator is not None and hasattr(legs_actuator, "network_file"):

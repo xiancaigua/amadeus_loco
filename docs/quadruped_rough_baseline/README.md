@@ -61,10 +61,14 @@ Per run layout:
 
 ```text
 outputs/quadruped_rough_baseline/rsl_rl/amadeus_quadruped_rough/<timestamp_run>/
-  model_*.pt
+  checkpoints/
+    model_*.pt
+  tensorboard/
+    events.out.tfevents.*
+  logs/
+    git/
+      *.diff
   params/
-  git/
-  events.out.tfevents.*
   datasets/
     train/
       train_dataset_0000.hdf5
@@ -106,13 +110,13 @@ Resume training:
 Evaluate checkpoint:
 
 ```bash
-/isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py --headless --checkpoint <run_dir>/model_<iter>.pt
+/isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py --headless --checkpoint <run_dir>/checkpoints/model_<iter>.pt
 ```
 
 Export rollouts:
 
 ```bash
-/isaac-sim/python.sh scripts/baseline/export_rollouts.py --checkpoint <run_dir>/model_<iter>.pt
+/isaac-sim/python.sh scripts/baseline/export_rollouts.py --checkpoint <run_dir>/checkpoints/model_<iter>.pt
 ```
 
 Postprocess chunked dataset:

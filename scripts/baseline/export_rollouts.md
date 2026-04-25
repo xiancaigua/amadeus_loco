@@ -8,7 +8,8 @@
 ## 2. 代码主流程
 1. 解析导出参数（checkpoint、episodes、envs、seed、task 等）。
 2. 推导输出目录：
-   - 若未传 `--output_dir`，默认落到 `checkpoint` 同目录下的 `datasets/rollouts/`。
+   - 若未传 `--output_dir`，默认落到 run 目录下的 `datasets/rollouts/`。
+   - 若 `--checkpoint` 位于 `<run_dir>/checkpoints/model_x.pt`，会自动回推到 `<run_dir>/datasets/rollouts/`。
 3. 组装子进程命令，调用 `eval_quadruped_rough.py`：
    - `--dataset_dir <output_dir>`
    - `--metrics_dir <output_dir>/metrics`
@@ -37,10 +38,9 @@
 
 ```bash
 /isaac-sim/python.sh scripts/baseline/export_rollouts.py \
-  --checkpoint outputs/quadruped_rough_baseline/.../model_500.pt \
+  --checkpoint outputs/quadruped_rough_baseline/.../<run_name>/checkpoints/model_500.pt \
   --num_episodes 128 \
   --num_envs 32 \
   --seed 42 \
   --output_dir outputs/quadruped_rough_baseline/rollouts/model_500
 ```
-

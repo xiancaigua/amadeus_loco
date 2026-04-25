@@ -18,9 +18,15 @@
    - Agent 配置：`...rsl_rl_ppo_cfg:AmadeusQuadrupedRoughPPORunnerCfg`
 4. 根据 CLI 覆盖配置（如 `num_envs`、`max_iterations`、`device`）。
 5. 准备 run 目录，设置：
+   - `checkpoints/`
+   - `tensorboard/`
+   - `logs/`
    - `datasets/train/`
+   - `datasets/eval/`
    - `metrics/`
-   - `videos/`
+   - `videos/train/`
+   - `videos/eval/`
+   - `params/`
 6. 创建环境并按需套 `gym.wrappers.RecordVideo`（训练视频）。
 7. 创建 `OnPolicyRunner`，并包装 logger，额外写入 `train_metrics.csv/jsonl`。
 8. 如配置了 resume，则加载 checkpoint。
@@ -58,11 +64,14 @@
 
 ## 4. 输出内容
 以 `run_dir=<output_root>/rsl_rl/<experiment>/<timestamp_run>/` 为例：
-- `model_*.pt`：checkpoint
-- `events.out.tfevents.*`：TensorBoard
+- `checkpoints/model_*.pt`：checkpoint
+- `tensorboard/events.out.tfevents.*`：TensorBoard
+- `logs/git/*.diff`：git 状态与 diff 快照
 - `metrics/train_metrics.csv`、`metrics/train_metrics.jsonl`：训练指标
 - `metrics/eval_metrics.csv`、`metrics/eval_metrics.jsonl`：评估指标
 - `datasets/train/*.hdf5`：训练阶段同步采集数据
+- `datasets/eval/*.hdf5`：评估/rollout 阶段导出数据
+- `videos/train/*.mp4`：训练阶段视频（启用 `--video` 时）
 - `videos/eval/iter_xxxx/*.mp4`：周期评估视频
 - `params/env.yaml`、`params/agent.yaml`：实际配置快照
 

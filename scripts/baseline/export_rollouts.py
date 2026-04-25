@@ -19,8 +19,10 @@ parser.add_argument("--output_dir", type=str, default=None, help="Output directo
 parser.add_argument("--device", type=str, default=None, help="Simulation device.")
 args = parser.parse_args()
 
-checkpoint_dir = os.path.dirname(os.path.abspath(args.checkpoint))
-output_dir = args.output_dir or os.path.join(checkpoint_dir, "datasets", "rollouts")
+checkpoint_path = os.path.abspath(args.checkpoint)
+checkpoint_dir = os.path.dirname(checkpoint_path)
+run_dir = os.path.dirname(checkpoint_dir) if os.path.basename(checkpoint_dir) == "checkpoints" else checkpoint_dir
+output_dir = args.output_dir or os.path.join(run_dir, "datasets", "rollouts")
 os.makedirs(output_dir, exist_ok=True)
 
 cmd = [
@@ -29,7 +31,7 @@ cmd = [
     "--task",
     args.task,
     "--checkpoint",
-    args.checkpoint,
+    checkpoint_path,
     "--num_envs",
     str(args.num_envs),
     "--num_episodes",

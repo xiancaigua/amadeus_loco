@@ -15,7 +15,7 @@ class AmadeusQuadrupedRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500
     save_interval = 25
-    experiment_name = "amadeus_quadruped_rough"
+    experiment_name = "train_quadruped_rough"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
