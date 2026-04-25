@@ -5,14 +5,21 @@
 
 import os
 
+from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers.recorder_manager import DatasetExportMode
 from isaaclab.utils import configclass
+from isaaclab_assets.robots.anymal import ANYMAL_C_CFG
 
-from isaaclab_tasks.manager_based.locomotion.velocity.config.anymal_c.rough_env_cfg import (
-    AnymalCRoughEnvCfg,
-    AnymalCRoughEnvCfg_PLAY,
+from .config import (
+    AmadeusQuadrupedRoughActionsCfg,
+    AmadeusQuadrupedRoughCommandsCfg,
+    AmadeusQuadrupedRoughCurriculumCfg,
+    AmadeusQuadrupedRoughEventCfg,
+    AmadeusQuadrupedRoughObservationsCfg,
+    AmadeusQuadrupedRoughRewardsCfg,
+    AmadeusQuadrupedRoughSceneCfg,
+    AmadeusQuadrupedRoughTerminationsCfg,
 )
-
 from .recorders import AmadeusOfflineRecorderManagerCfg
 
 LOCAL_ASSETS_ROOT_ENV_VAR = "AMADEUS_ISAACLAB_ASSETS_ROOT"
@@ -65,33 +72,80 @@ def _maybe_override_anymal_assets_with_local_paths(env_cfg) -> None:
 
 
 @configclass
-class AmadeusQuadrupedRoughEnvCfg(AnymalCRoughEnvCfg):
-    """External-project baseline built on top of the official ANYmal-C rough locomotion task."""
+class AmadeusQuadrupedRoughEnvCfg(ManagerBasedRLEnvCfg):
+    """Explicit manager-based rough-terrain ANYmal-C baseline config for Amadeus."""
 
+    scene: AmadeusQuadrupedRoughSceneCfg = AmadeusQuadrupedRoughSceneCfg(num_envs=4096, env_spacing=2.5)
+    observations: AmadeusQuadrupedRoughObservationsCfg = AmadeusQuadrupedRoughObservationsCfg()
+    actions: AmadeusQuadrupedRoughActionsCfg = AmadeusQuadrupedRoughActionsCfg()
+    commands: AmadeusQuadrupedRoughCommandsCfg = AmadeusQuadrupedRoughCommandsCfg()
+    rewards: AmadeusQuadrupedRoughRewardsCfg = AmadeusQuadrupedRoughRewardsCfg()
+    terminations: AmadeusQuadrupedRoughTerminationsCfg = AmadeusQuadrupedRoughTerminationsCfg()
+    events: AmadeusQuadrupedRoughEventCfg = AmadeusQuadrupedRoughEventCfg()
+    curriculum: AmadeusQuadrupedRoughCurriculumCfg = AmadeusQuadrupedRoughCurriculumCfg()
     recorders: AmadeusOfflineRecorderManagerCfg = AmadeusOfflineRecorderManagerCfg()
 
     def __post_init__(self):
-        super().__post_init__()
+        # Scene/robot setup
+        self.scene.robot = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+        # Environment timing
+        self.decimation = 4
+        self.episode_length_s = 20.0
+
+        # Simulation setup
+        self.sim.dt = 0.005
+        self.sim.render_interval = self.decimation
+        self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+
+        # Sensor update rates
+        if self.scene.height_scanner is not None:
+            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        if self.scene.contact_forces is not None:
+            self.scene.contact_forces.update_period = self.sim.dt
+
+        # Terrain curriculum setup
+        if getattr(self.curriculum, "terrain_levels", None) is not None:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = True
+        else:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = False
+
+        # Local asset override for offline/headless clusters
         _maybe_override_anymal_assets_with_local_paths(self)
-        # Disable command debug markers (arrow_x.usd) to avoid remote UI asset dependency in headless server runs.
-        if hasattr(self, "commands") and hasattr(self.commands, "base_velocity"):
+
+        # Disable command debug markers (arrow_x.usd) to avoid remote UI asset dependency in headless runs.
+        if hasattr(self.commands, "base_velocity"):
             self.commands.base_velocity.debug_vis = False
+
         self.env_name = "Template-Amadeus-Quadruped-Rough-v0"
         self.recorders.dataset_filename = "train_dataset"
         self.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
 
 
 @configclass
-class AmadeusQuadrupedRoughEnvCfg_PLAY(AnymalCRoughEnvCfg_PLAY):
+class AmadeusQuadrupedRoughEnvCfg_PLAY(AmadeusQuadrupedRoughEnvCfg):
     """Play/evaluation configuration for the external quadruped baseline."""
-
-    recorders: AmadeusOfflineRecorderManagerCfg = AmadeusOfflineRecorderManagerCfg()
 
     def __post_init__(self):
         super().__post_init__()
-        _maybe_override_anymal_assets_with_local_paths(self)
-        if hasattr(self, "commands") and hasattr(self.commands, "base_velocity"):
-            self.commands.base_velocity.debug_vis = False
+
+        # Smaller play scene for evaluation
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.scene.terrain.max_init_terrain_level = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 5
+            self.scene.terrain.terrain_generator.num_cols = 5
+            self.scene.terrain.terrain_generator.curriculum = False
+
+        # Play mode: deterministic obs and no stochastic perturbation pushes
+        self.observations.policy.enable_corruption = False
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+
         self.env_name = "Template-Amadeus-Quadruped-Rough-Play-v0"
         self.recorders.dataset_filename = "eval_dataset"
         self.recorders.export_in_close = True
