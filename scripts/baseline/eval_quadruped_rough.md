@@ -11,7 +11,7 @@
 3. 若指定 `--video_folder`，自动开启摄像头渲染能力。
 4. 通过 Hydra 加载 play 环境配置与 agent 配置。
 5. 根据 CLI 覆盖 `num_envs`、`seed`、`device`，并设置 recorder 导出目录。
-6. 创建环境（可选套 `RecordVideo`，只在 step=0 触发一次短视频采样）。
+6. 创建环境（可选套 `RecordVideo`，支持单次或周期触发短视频采样）。
 7. 创建 `OnPolicyRunner` 并加载 checkpoint，提取推理策略。
 8. 循环执行策略：
    - 收集 `reward/length` 与速度跟踪误差
@@ -63,7 +63,7 @@
 ```bash
 /isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py \
   --headless \
-  --checkpoint outputs/quadruped_rough_baseline/.../<run_name>/checkpoints/model_200.pt \
+  --checkpoint outputs/quadruped_rough_baseline/rsl_rl/<experiment_name>/<run_name>/checkpoints/model_200.pt \
   --num_envs 8 \
   --num_episodes 8 \
   --video_folder outputs/quadruped_rough_baseline/eval_videos/run_200 \
@@ -75,11 +75,11 @@
 ```
   /isaac-sim/python.sh scripts/baseline/eval_quadruped_rough.py \
     --task Template-Amadeus-Quadruped-Rough-Play-v0 \
-    --checkpoint /workspace/amadeus/amadeus/outputs/quadruped_rough_baseline/rsl_rl/amadeus_quadruped_rough/2026-04-24_08-22-54/checkpoints/model_1499.pt \
+    --checkpoint <run_dir>/checkpoints/model_1499.pt \
     --headless \
     --num_envs 1 \
     --num_episodes 6 \
-    --video_folder outputs/quadruped_rough_baseline/rsl_rl/eval_video_follow_marker \
+    --video_folder outputs/quadruped_rough_baseline/eval_video_follow_marker \
     --video_start_step 20 \
     --video_length 220 \
     --video_interval_steps 260 \

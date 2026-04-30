@@ -60,7 +60,7 @@ outputs/quadruped_rough_baseline/
 Per run layout:
 
 ```text
-outputs/quadruped_rough_baseline/rsl_rl/amadeus_quadruped_rough/<timestamp_run>/
+outputs/quadruped_rough_baseline/rsl_rl/<experiment_name>/<timestamp_run>[_<run_name>]/
   checkpoints/
     model_*.pt
   tensorboard/
@@ -130,7 +130,7 @@ Postprocess chunked dataset:
 TensorBoard:
 
 ```bash
-/isaac-sim/python.sh -m tensorboard.main --logdir outputs/quadruped_rough_baseline/rsl_rl
+/isaac-sim/python.sh -m tensorboard.main --logdir outputs/quadruped_rough_baseline
 ```
 
 ## Extension Points

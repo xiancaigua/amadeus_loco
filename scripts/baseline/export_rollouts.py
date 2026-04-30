@@ -21,8 +21,16 @@ args = parser.parse_args()
 
 checkpoint_path = os.path.abspath(args.checkpoint)
 checkpoint_dir = os.path.dirname(checkpoint_path)
-run_dir = os.path.dirname(checkpoint_dir) if os.path.basename(checkpoint_dir) == "checkpoints" else checkpoint_dir
-output_dir = args.output_dir or os.path.join(run_dir, "datasets", "rollouts")
+run_dir = os.path.dirname(checkpoint_dir) if os.path.basename(checkpoint_dir) in {"checkpoints", "ckpt"} else checkpoint_dir
+if args.output_dir:
+    output_dir = args.output_dir
+else:
+    if os.path.isdir(os.path.join(run_dir, "datasets")):
+        output_dir = os.path.join(run_dir, "datasets", "rollouts")
+    elif os.path.isdir(os.path.join(run_dir, "data")):
+        output_dir = os.path.join(run_dir, "data", "rollouts")
+    else:
+        output_dir = os.path.join(run_dir, "datasets", "rollouts")
 os.makedirs(output_dir, exist_ok=True)
 
 cmd = [

@@ -52,7 +52,7 @@
 | `--eval_video_length` | `300` | 每次评估视频帧步数 | 80~300 足够观察 gait |
 | `--eval_strict` | `False` | 周期评估失败时是否中断训练 | 默认关：评估失败会告警并继续训练 |
 | `--dataset_chunk_episodes` | `128` | 每个 HDF5 shard 的 episode 数 | 64~256 |
-| `--output_root` | `outputs/quadruped_rough_baseline` | 输出根目录 | 建议按实验分目录 |
+| `--output_root` | `outputs/quadruped_rough_baseline` | 输出根目录 | 默认路径：`<output_root>/rsl_rl/<experiment_name>/<run_name>/...` |
 | `--video` | `False` | 是否录制训练视频 | 通常关，减少开销 |
 | `--video_interval` | `5000` | 训练视频触发步间隔 | 仅训练录像时使用 |
 | `--video_length` | `200` | 训练视频长度 | 50~200 |
@@ -63,7 +63,7 @@
 - `AppLauncher.add_app_launcher_args(parser)`：Isaac Sim 启动参数（如 `--headless`、`--device`）。
 
 ## 4. 输出内容
-以 `run_dir=<output_root>/rsl_rl/<experiment>/<timestamp_run>/` 为例：
+以 `run_dir=<output_root>/rsl_rl/<experiment_name>/<timestamp_run>[_<run_name>]/` 为例：
 - `checkpoints/model_*.pt`：checkpoint
 - `tensorboard/events.out.tfevents.*`：TensorBoard
 - `logs/git/*.diff`：git 状态与 diff 快照

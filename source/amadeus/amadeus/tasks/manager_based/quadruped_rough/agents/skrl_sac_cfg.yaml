@@ -1,0 +1,118 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers.
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+seed: 42
+
+models:
+  separate: True
+
+  policy:
+    class: GaussianMixin
+    clip_actions: False
+    clip_log_std: True
+    min_log_std: -20.0
+    max_log_std: 2.0
+    initial_log_std: -1.0
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [512, 256, 256]
+        activations: elu
+    output: tanh(ACTIONS)
+
+  critic_1:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: "concatenate([OBSERVATIONS, ACTIONS])"
+        layers: [512, 256, 256]
+        activations: elu
+    output: ONE
+
+  critic_2:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: "concatenate([OBSERVATIONS, ACTIONS])"
+        layers: [512, 256, 256]
+        activations: elu
+    output: ONE
+
+  target_critic_1:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: "concatenate([OBSERVATIONS, ACTIONS])"
+        layers: [512, 256, 256]
+        activations: elu
+    output: ONE
+
+  target_critic_2:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: "concatenate([OBSERVATIONS, ACTIONS])"
+        layers: [512, 256, 256]
+        activations: elu
+    output: ONE
+
+memory:
+  class: RandomMemory
+  memory_size: 1000000
+  replacement: True
+
+agent:
+  class: SAC
+
+  gradient_steps: 1
+  batch_size: 2048
+  discount_factor: 0.99
+  polyak: 0.005
+
+  learning_rate: [3.0e-4, 3.0e-4, 3.0e-4]
+  learning_rate_scheduler: null
+  learning_rate_scheduler_kwargs: null
+
+  observation_preprocessor: RunningStandardScaler
+  observation_preprocessor_kwargs: null
+  state_preprocessor: null
+  state_preprocessor_kwargs: null
+
+  random_timesteps: 2000
+  learning_starts: 2000
+  grad_norm_clip: 1.0
+
+  learn_entropy: True
+  initial_entropy_value: 0.2
+  target_entropy: null
+
+  rewards_shaper_scale: 1.0
+  mixed_precision: False
+
+  experiment:
+    directory: "loco_sac"
+    experiment_name: ""
+    write_interval: 2000
+    checkpoint_interval: 0
+
+trainer:
+  class: SequentialTrainer
+  timesteps: 2000000
+  environment_info: log
+  headless: True
+  close_environment_at_exit: False
+  disable_progressbar: False
+
+sac_runtime:
+  update_frequency: 1
+  save_interval: 20000
+  train_metrics_interval: 2000
+  eval_interval_steps: 50000
+  eval_num_envs: 8
+  eval_episodes: 4

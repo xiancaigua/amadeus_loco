@@ -31,13 +31,66 @@ parser.add_argument("--eval_interval", type=int, default=50, help="Evaluate ever
 parser.add_argument("--eval_episodes", type=int, default=8, help="Number of evaluation episodes.")
 parser.add_argument("--eval_video_length", type=int, default=300, help="Evaluation video length in env steps.")
 parser.add_argument(
+    "--eval_video_start_step",
+    type=int,
+    default=20,
+    help="Environment step index to start periodic-eval video capture.",
+)
+parser.add_argument(
+    "--eval_follow_robot_camera",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Use follow-camera mode during periodic evaluation videos (default: enabled).",
+)
+parser.add_argument(
+    "--eval_camera_eye",
+    type=float,
+    nargs=3,
+    default=[4.0, 4.0, 3.0],
+    metavar=("X", "Y", "Z"),
+    help="Fallback fixed camera eye for periodic eval video.",
+)
+parser.add_argument(
+    "--eval_camera_lookat",
+    type=float,
+    nargs=3,
+    default=[0.0, 0.0, 0.5],
+    metavar=("X", "Y", "Z"),
+    help="Fallback fixed camera lookat for periodic eval video.",
+)
+parser.add_argument(
+    "--eval_camera_offset",
+    type=float,
+    nargs=3,
+    default=[3.0, 3.0, 2.0],
+    metavar=("X", "Y", "Z"),
+    help="Follow-camera offset relative to robot target for periodic eval video.",
+)
+parser.add_argument(
+    "--eval_camera_robot_env_id",
+    type=int,
+    default=0,
+    help="Environment index used by follow-camera mode during periodic eval video.",
+)
+parser.add_argument(
+    "--eval_show_velocity_markers",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Show command-vs-actual velocity markers in periodic eval video.",
+)
+parser.add_argument(
     "--eval_strict",
     action="store_true",
     default=False,
     help="Abort training when periodic evaluation fails. By default, evaluation failures are tolerated.",
 )
 parser.add_argument("--dataset_chunk_episodes", type=int, default=128, help="Episodes per dataset shard.")
-parser.add_argument("--output_root", type=str, default="outputs/quadruped_rough_baseline", help="Output root.")
+parser.add_argument(
+    "--output_root",
+    type=str,
+    default="outputs/quadruped_rough_baseline",
+    help="Output root directory. Layout: <output_root>/rsl_rl/<experiment_name>/<run_name>/...",
+)
 parser.add_argument("--distributed", action="store_true", default=False, help="Run distributed training.")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -86,23 +139,48 @@ def _resolve_resume_path(log_root_path: str, agent_cfg: RslRlBaseRunnerCfg) -> s
         return None
     if args_cli.checkpoint:
         return args_cli.checkpoint
-    try:
-        return get_checkpoint_path(
-            log_root_path,
-            agent_cfg.load_run,
-            agent_cfg.load_checkpoint,
-            other_dirs=["checkpoints"],
-        )
-    except ValueError:
-        # Backward compatibility with older run layout where checkpoints lived in run root.
-        return get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+    load_run = args_cli.load_run or agent_cfg.load_run
+    if not load_run:
+        return None
+
+    search_roots: list[str] = [log_root_path]
+    # Transitional compatibility with short-layout runs created previously.
+    compat_short_root = os.path.abspath(args_cli.output_root)
+    if compat_short_root not in search_roots:
+        search_roots.append(compat_short_root)
+
+    for root in search_roots:
+        try:
+            return get_checkpoint_path(
+                root,
+                load_run,
+                agent_cfg.load_checkpoint,
+                other_dirs=["ckpt", "checkpoints"],
+            )
+        except ValueError:
+            pass
+        try:
+            # Backward compatibility with older run layout where checkpoints lived in run root.
+            return get_checkpoint_path(root, load_run, agent_cfg.load_checkpoint)
+        except ValueError:
+            pass
+    raise ValueError(
+        f"Unable to resolve checkpoint for resume. Tried roots={search_roots}, load_run={load_run}, "
+        f"load_checkpoint={agent_cfg.load_checkpoint}"
+    )
 
 
 def _make_run_dir(agent_cfg: RslRlBaseRunnerCfg) -> tuple[str, str]:
     log_root_path = os.path.abspath(os.path.join(args_cli.output_root, "rsl_rl", agent_cfg.experiment_name))
     ensure_dir(log_root_path)
     if args_cli.resume and args_cli.load_run:
-        return log_root_path, os.path.join(log_root_path, args_cli.load_run)
+        candidate_default = os.path.join(log_root_path, args_cli.load_run)
+        compat_short = os.path.abspath(os.path.join(args_cli.output_root, args_cli.load_run))
+        if os.path.isdir(candidate_default):
+            return log_root_path, candidate_default
+        if os.path.isdir(compat_short):
+            return os.path.abspath(args_cli.output_root), compat_short
+        return log_root_path, candidate_default
 
     run_name = datetime.now().strftime("%Y-%m-%d_%H-%M")
     if agent_cfg.run_name:
@@ -158,7 +236,21 @@ def _run_periodic_eval(run_dir: str, checkpoint_path: str, iteration: int):
         eval_video_dir,
         "--video_length",
         str(args_cli.eval_video_length),
+        "--video_start_step",
+        str(args_cli.eval_video_start_step),
+        "--camera_eye",
+        *[str(v) for v in args_cli.eval_camera_eye],
+        "--camera_lookat",
+        *[str(v) for v in args_cli.eval_camera_lookat],
+        "--camera_offset",
+        *[str(v) for v in args_cli.eval_camera_offset],
+        "--camera_robot_env_id",
+        str(args_cli.eval_camera_robot_env_id),
     ]
+    if args_cli.eval_follow_robot_camera:
+        cmd_with_video.append("--follow_robot_camera")
+    if args_cli.eval_show_velocity_markers:
+        cmd_with_video.append("--show_velocity_markers")
     try:
         subprocess.run(cmd_with_video, check=True)
         return

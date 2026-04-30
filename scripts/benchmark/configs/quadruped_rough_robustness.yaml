@@ -1,0 +1,107 @@
+global:
+  task: Template-Amadeus-Quadruped-Rough-v0
+  num_envs: 64
+  num_episodes: 64
+  seed: 42
+  device: cuda:0
+  step_trace_env_id: 0
+  step_trace_max_steps: 1200
+  max_eval_steps: 4000
+  recovery_trigger_error: 0.75
+  recovery_clear_error: 0.25
+  recovery_min_hold_steps: 5
+  video:
+    enabled: true
+    num_envs: 1
+    num_episodes: 1
+    video_length: 900
+    video_start_step: 20
+    max_clips_per_scenario: 3
+    follow_robot_camera: true
+    camera_eye: [4.0, 4.0, 3.0]
+    camera_lookat: [0.0, 0.0, 0.5]
+    camera_offset: [3.0, 3.0, 2.0]
+    camera_robot_env_id: 0
+    show_velocity_markers: true
+
+scenarios:
+  - name: id_reference
+    group: in_distribution
+    description: Matches the baseline training support (reference condition).
+    overrides:
+      command:
+        lin_vel_x: [-1.0, 1.0]
+        lin_vel_y: [-1.0, 1.0]
+        ang_vel_z: [-1.0, 1.0]
+      push:
+        enabled: true
+        interval_s: [10.0, 15.0]
+        vel_x: [-0.5, 0.5]
+        vel_y: [-0.5, 0.5]
+      friction:
+        static: [0.8, 0.8]
+        dynamic: [0.6, 0.6]
+      mass:
+        add_base_mass: [-5.0, 5.0]
+      terrain:
+        difficulty_range: [0.0, 1.0]
+        stairs_height_scale: 1.0
+        boxes_height_scale: 1.0
+        rough_noise_scale: 1.0
+        slope_scale: 1.0
+        curriculum: false
+        max_init_terrain_level: 5
+
+  - name: long_tail_push_command_terrain
+    group: long_tail
+    description: Near-boundary but plausible disturbances and terrain difficulty inside extended support.
+    overrides:
+      command:
+        lin_vel_x: [-1.2, 1.2]
+        lin_vel_y: [-1.2, 1.2]
+        ang_vel_z: [-1.2, 1.2]
+      push:
+        enabled: true
+        interval_s: [7.0, 12.0]
+        vel_x: [-0.8, 0.8]
+        vel_y: [-0.8, 0.8]
+      friction:
+        static: [0.65, 0.9]
+        dynamic: [0.45, 0.7]
+      mass:
+        add_base_mass: [-7.0, 7.0]
+      terrain:
+        difficulty_range: [0.3, 1.0]
+        stairs_height_scale: 1.15
+        boxes_height_scale: 1.15
+        rough_noise_scale: 1.15
+        slope_scale: 1.15
+        curriculum: false
+        max_init_terrain_level: null
+
+  - name: ood_extreme_shift
+    group: ood
+    description: Clear out-of-support shift with stronger impulses, commands, and dynamics/terrain mismatch.
+    overrides:
+      command:
+        lin_vel_x: [-1.6, 1.6]
+        lin_vel_y: [-1.6, 1.6]
+        ang_vel_z: [-1.6, 1.6]
+      push:
+        enabled: true
+        interval_s: [4.0, 8.0]
+        vel_x: [-1.2, 1.2]
+        vel_y: [-1.2, 1.2]
+      friction:
+        static: [0.25, 1.1]
+        dynamic: [0.15, 0.85]
+      mass:
+        add_base_mass: [-10.0, 10.0]
+      terrain:
+        difficulty_range: [0.6, 1.4]
+        stairs_height_scale: 1.35
+        boxes_height_scale: 1.35
+        rough_noise_scale: 1.35
+        slope_scale: 1.35
+        curriculum: false
+        max_init_terrain_level: null
