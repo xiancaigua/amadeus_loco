@@ -1,92 +1,111 @@
 # Quadruped Robustness Benchmark
 
-This folder adds a reproducible robustness benchmark on top of the existing PPO baseline.
+Detailed engineering documentation for this benchmark stack now lives in:
 
-## Files
+- [`docs/benchmark/README.md`](../../docs/benchmark/README.md)
 
-- `benchmark_quadruped_rough.py`
-  - Runs scenario-based evaluation for the quadruped rough baseline.
-  - Supports configurable distribution shifts (commands, pushes, friction, mass, terrain difficulty/scales).
-  - Exports per-episode metrics, termination stats, traces, and optional videos.
-- `configs/quadruped_rough_robustness.yaml`
-  - Default scenario set with:
-    - `id_reference`
-    - `long_tail_push_command_terrain`
-    - `ood_extreme_shift`
-- `build_robustness_report.py`
-  - Consolidates isolated scenario runs into one report folder with merged tables and plots.
+This folder provides two benchmark paths on top of the existing PPO baseline:
 
-## Typical Usage
+- `run_quadruped_rough_benchmark.py` (recommended, suite/case modular benchmark)
+- `benchmark_quadruped_rough.py` (legacy scenario runner kept for backward compatibility)
 
-Quantitative (no video):
+## New Structured Runner
+
+### Core files
+
+- `run_quadruped_rough_benchmark.py`
+  - Configuration-driven benchmark runner with batch suite execution.
+  - Supports runtime perturbations (push schedule and observation delay/noise/drop).
+  - Exports raw metrics, traces, videos, summary tables, plots, and research summary.
+- `configs/quadruped_rough_benchmark_suites.yaml`
+  - Canonical benchmark suites:
+    - initialization_sensitivity
+    - disturbance_recovery
+    - terrain_generalization
+    - dynamics_mismatch
+    - observation_mismatch
+    - command_distribution
+    - combined_ood
+
+### List suites/cases
 
 ```bash
-/isaac-sim/python.sh scripts/benchmark/benchmark_quadruped_rough.py \
-  --task Template-Amadeus-Quadruped-Rough-v0 \
-  --checkpoint <ckpt> \
-  --headless \
-  --num_envs 16 \
-  --num_episodes 16 \
-  --no-video \
-  --scenario_names id_reference \
-  --benchmark_run_name benchmark_id \
-  --output_root outputs/quadruped_rough_benchmark_isolated
+/isaac-sim/python.sh scripts/benchmark/run_quadruped_rough_benchmark.py \
+  --benchmark_cfg scripts/benchmark/configs/quadruped_rough_benchmark_suites.yaml \
+  --list_cases
 ```
 
-Video evidence (single env):
+### Run a full suite set
 
 ```bash
-/isaac-sim/python.sh scripts/benchmark/benchmark_quadruped_rough.py \
+/isaac-sim/python.sh scripts/benchmark/run_quadruped_rough_benchmark.py \
   --task Template-Amadeus-Quadruped-Rough-v0 \
   --checkpoint <ckpt> \
   --headless \
+  --suite_names command_distribution,disturbance_recovery,terrain_generalization \
+  --num_envs 32 \
+  --num_episodes 32 \
+  --output_root outputs/quadruped_rough_benchmark
+```
+
+### Run one case with longer video evidence
+
+```bash
+/isaac-sim/python.sh scripts/benchmark/run_quadruped_rough_benchmark.py \
+  --task Template-Amadeus-Quadruped-Rough-v0 \
+  --checkpoint <ckpt> \
+  --headless \
+  --case_names combo_ood_grid_2 \
   --num_envs 1 \
-  --num_episodes 3 \
+  --num_episodes 2 \
   --video \
-  --video_length 700 \
-  --video_max_clips 3 \
-  --video_start_step 20 \
-  --scenario_names ood_extreme_shift \
-  --benchmark_run_name benchmark_video_ood \
-  --output_root outputs/quadruped_rough_benchmark_isolated
+  --video_length 1500 \
+  --video_max_clips 2 \
+  --output_root outputs/quadruped_rough_benchmark
 ```
 
-Build consolidated report:
-
-```bash
-/isaac-sim/python.sh scripts/benchmark/build_robustness_report.py \
-  --id_run_dir <id_run_dir> \
-  --long_tail_run_dir <long_tail_run_dir> \
-  --ood_run_dir <ood_run_dir> \
-  --id_video_run_dir <id_video_run_dir> \
-  --long_tail_video_run_dir <long_tail_video_run_dir> \
-  --ood_video_run_dir <ood_video_run_dir> \
-  --out_dir outputs/quadruped_rough_benchmark_isolated/report_<date>
-```
-
-## Output Structure (per run)
+## Output structure (new runner)
 
 ```text
 <run_dir>/
-  config/
-  scenarios/<scenario_name>/
-    metrics/
+  config_snapshot/
+    env_base.yaml
+    agent_base.yaml
+    runtime_args.json
+    benchmark_cfg_resolved.json
+    selected_cases.json
+  raw_metrics/
+    <suite>/<case>/
       episodes.csv
       episodes.json
       summary.json
       termination_stats.csv
-    traces/
-      trace_env.csv
-    videos/                # when --video
-  summary/
-    scenario_summary.csv
-    scenario_summary.json
+      case_overrides_snapshot.json
+  traces/
+    <suite>/<case>/trace_env.csv
+  videos/
+    <suite>/<case>/*.mp4
+  summary_metrics/
+    case_summary.csv
+    case_summary.json
     index.json
   plots/
+    case_bar_*.png
+    bucket_bar_*.png
+    combined_ood_fall_rate_heatmap.png (if grid metadata exists)
+  reports/
+    research_summary.md
+    manifest.json
 ```
 
-## Notes
+## Legacy tools
 
-- For stability, running scenarios in isolated processes is recommended (`--scenario_names` one at a time).
-- `max_eval_steps` in YAML prevents endless runs in extreme shifts.
-- Recorder manager is disabled in this benchmark path to reduce I/O overhead.
+- `benchmark_quadruped_rough.py`: previous ID/long-tail/OOD scenario benchmark runner.
+- `build_robustness_report.py`: report merger for isolated legacy runs.
+
+## Regenerate plots/report from existing run
+
+```bash
+/isaac-sim/python.sh scripts/benchmark/generate_quadruped_benchmark_report.py \
+  --run_dir <benchmark_run_dir>
+```

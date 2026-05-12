@@ -1,0 +1,7 @@
+- PPO
+- SAC
+- OOD evaluation
+    - CoM
+    - Push
+    - Terrain difficulty
+    - Init Joint Vel/State

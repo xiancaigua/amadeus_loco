@@ -1,0 +1,366 @@
+global:
+  task: Template-Amadeus-Quadruped-Rough-v0
+  num_envs: 64
+  num_episodes: 64
+  seed: 42
+  device: cuda:0
+  max_eval_steps: 6000
+  trace:
+    env_id: 0
+    max_steps: 1600
+  recovery:
+    trigger_error: 0.75
+    clear_error: 0.25
+    min_hold_steps: 5
+  video:
+    enabled: true
+    num_envs: 1
+    num_episodes: 2
+    video_length: 900
+    video_start_step: 20
+    video_interval_steps: 0
+    max_clips_per_case: 2
+    follow_robot_camera: true
+    camera_eye: [4.0, 4.0, 3.0]
+    camera_lookat: [0.0, 0.0, 0.5]
+    camera_offset: [3.0, 3.0, 2.0]
+    camera_robot_env_id: 0
+    show_velocity_markers: true
+    velocity_marker_scale: 3.0
+    velocity_marker_height: 0.5
+    velocity_marker_env_id: 0
+
+suites:
+  initialization_sensitivity:
+    description: "Initial-state sensitivity: root pose/velocity and joint-state perturbation."
+    enabled: true
+    cases:
+      - name: init_id
+        bucket: id
+        description: "Training-distribution-like reset."
+        tags: [init, id]
+        overrides:
+          init:
+            reset_base:
+              pose_range: {x: [-0.5, 0.5], y: [-0.5, 0.5], yaw: [-3.14, 3.14]}
+              velocity_range: {x: [-0.5, 0.5], y: [-0.5, 0.5], z: [-0.5, 0.5], roll: [-0.5, 0.5], pitch: [-0.5, 0.5], yaw: [-0.5, 0.5]}
+            reset_joints:
+              position_range: [0.5, 1.5]
+              velocity_range: [0.0, 0.0]
+
+      - name: init_long_tail
+        bucket: long_tail
+        description: "Near-boundary initial tilt and joint-velocity perturbation."
+        tags: [init, long_tail]
+        overrides:
+          init:
+            reset_base:
+              pose_range: {x: [-0.6, 0.6], y: [-0.6, 0.6], roll: [-0.25, 0.25], pitch: [-0.25, 0.25], yaw: [-3.14, 3.14]}
+              velocity_range: {x: [-0.8, 0.8], y: [-0.8, 0.8], z: [-0.6, 0.6], roll: [-0.8, 0.8], pitch: [-0.8, 0.8], yaw: [-0.8, 0.8]}
+            reset_joints:
+              position_range: [0.35, 1.65]
+              velocity_range: [-1.5, 1.5]
+
+      - name: init_ood_recovery_state
+        bucket: ood
+        description: "Recovery-like starts with larger tilt and body velocity mismatch."
+        tags: [init, ood, recovery_state]
+        overrides:
+          init:
+            reset_base:
+              pose_range: {x: [-0.8, 0.8], y: [-0.8, 0.8], roll: [-0.5, 0.5], pitch: [-0.5, 0.5], yaw: [-3.14, 3.14]}
+              velocity_range: {x: [-1.3, 1.3], y: [-1.3, 1.3], z: [-0.8, 0.8], roll: [-1.2, 1.2], pitch: [-1.2, 1.2], yaw: [-1.2, 1.2]}
+            reset_joints:
+              position_range: [0.2, 1.8]
+              velocity_range: [-3.0, 3.0]
+
+  disturbance_recovery:
+    description: "Runtime push robustness with timing/pattern variation."
+    enabled: true
+    cases:
+      - name: push_id_event_default
+        bucket: id
+        description: "Default training-support push via interval event."
+        tags: [disturbance, id]
+        overrides:
+          push:
+            enabled: true
+            interval_s: [10.0, 15.0]
+            vel_x: [-0.5, 0.5]
+            vel_y: [-0.5, 0.5]
+
+      - name: push_long_tail_periodic
+        bucket: long_tail
+        description: "Periodic runtime pushes with moderate stronger magnitude."
+        tags: [disturbance, long_tail, periodic]
+        overrides:
+          push:
+            enabled: false
+          push_runtime:
+            enabled: true
+            pattern: periodic
+            start_step: 160
+            interval_steps: 220
+            duration_steps: 1
+            magnitude_range: [0.6, 0.9]
+            direction_deg_range: [-180.0, 180.0]
+            env_fraction: 1.0
+
+      - name: push_ood_random_interval
+        bucket: ood
+        description: "Random-interval stronger pushes (clear OOD)."
+        tags: [disturbance, ood, random_interval]
+        overrides:
+          push:
+            enabled: false
+          push_runtime:
+            enabled: true
+            pattern: random_interval
+            start_step: 100
+            random_interval_range: [80, 180]
+            duration_steps: 1
+            magnitude_range: [0.9, 1.3]
+            direction_deg_range: [-180.0, 180.0]
+            env_fraction: 1.0
+
+  terrain_generalization:
+    description: "Terrain roughness/difficulty robustness."
+    enabled: true
+    cases:
+      - name: terrain_id_reference
+        bucket: id
+        tags: [terrain, id]
+        overrides:
+          terrain:
+            difficulty_range: [0.0, 1.0]
+            stairs_height_scale: 1.0
+            boxes_height_scale: 1.0
+            rough_noise_scale: 1.0
+            slope_scale: 1.0
+            curriculum: false
+            max_init_terrain_level: 5
+
+      - name: terrain_long_tail_harder
+        bucket: long_tail
+        tags: [terrain, long_tail]
+        overrides:
+          terrain:
+            difficulty_range: [0.3, 1.0]
+            stairs_height_scale: 1.2
+            boxes_height_scale: 1.2
+            rough_noise_scale: 1.2
+            slope_scale: 1.2
+            curriculum: false
+            max_init_terrain_level: null
+
+      - name: terrain_ood_extreme
+        bucket: ood
+        tags: [terrain, ood]
+        overrides:
+          terrain:
+            difficulty_range: [0.6, 1.4]
+            stairs_height_scale: 1.45
+            boxes_height_scale: 1.45
+            rough_noise_scale: 1.45
+            slope_scale: 1.45
+            curriculum: false
+            max_init_terrain_level: null
+
+  dynamics_mismatch:
+    description: "Friction/mass/COM/actuator mismatch robustness."
+    enabled: true
+    cases:
+      - name: dynamics_id_reference
+        bucket: id
+        tags: [dynamics, id]
+        overrides:
+          friction:
+            static: [0.8, 0.8]
+            dynamic: [0.6, 0.6]
+          mass:
+            add_base_mass: [-5.0, 5.0]
+          com:
+            x: [-0.05, 0.05]
+            y: [-0.05, 0.05]
+            z: [-0.01, 0.01]
+
+      - name: dynamics_long_tail_shift
+        bucket: long_tail
+        tags: [dynamics, long_tail]
+        overrides:
+          friction:
+            static: [0.65, 0.95]
+            dynamic: [0.45, 0.75]
+          mass:
+            add_base_mass: [-7.0, 7.0]
+          com:
+            x: [-0.07, 0.07]
+            y: [-0.07, 0.07]
+            z: [-0.02, 0.02]
+          dynamics:
+            actuator_stiffness_scale: 0.92
+            actuator_damping_scale: 1.08
+
+      - name: dynamics_ood_extreme
+        bucket: ood
+        tags: [dynamics, ood]
+        overrides:
+          friction:
+            static: [0.25, 1.1]
+            dynamic: [0.15, 0.85]
+          mass:
+            add_base_mass: [-10.0, 10.0]
+          com:
+            x: [-0.1, 0.1]
+            y: [-0.1, 0.1]
+            z: [-0.03, 0.03]
+          dynamics:
+            actuator_stiffness_scale: 0.85
+            actuator_damping_scale: 1.15
+
+  observation_mismatch:
+    description: "Observation corruption mismatch: noise/delay/drop-frame."
+    enabled: true
+    cases:
+      - name: obs_id_reference
+        bucket: id
+        tags: [observation, id]
+        overrides:
+          observation:
+            enable_corruption: true
+            noise_scale: 1.0
+          observation_runtime:
+            delay_steps: 0
+            additive_noise_std: 0.0
+            drop_prob: 0.0
+
+      - name: obs_long_tail_noise_delay
+        bucket: long_tail
+        tags: [observation, long_tail]
+        overrides:
+          observation:
+            enable_corruption: true
+            noise_scale: 1.25
+          observation_runtime:
+            delay_steps: 1
+            additive_noise_std: 0.02
+            drop_prob: 0.0
+
+      - name: obs_ood_delay_drop
+        bucket: ood
+        tags: [observation, ood]
+        overrides:
+          observation:
+            enable_corruption: true
+            noise_scale: 1.6
+          observation_runtime:
+            delay_steps: 3
+            additive_noise_std: 0.05
+            drop_prob: 0.12
+
+  command_distribution:
+    description: "Command in-distribution / long-tail / OOD robustness."
+    enabled: true
+    cases:
+      - name: cmd_id_reference
+        bucket: id
+        tags: [command, id]
+        overrides:
+          command:
+            lin_vel_x: [-1.0, 1.0]
+            lin_vel_y: [-1.0, 1.0]
+            ang_vel_z: [-1.0, 1.0]
+            resampling_time_s: [10.0, 10.0]
+
+      - name: cmd_long_tail
+        bucket: long_tail
+        tags: [command, long_tail]
+        overrides:
+          command:
+            lin_vel_x: [-1.2, 1.2]
+            lin_vel_y: [-1.2, 1.2]
+            ang_vel_z: [-1.2, 1.2]
+            resampling_time_s: [5.0, 8.0]
+
+      - name: cmd_ood_fast_switch
+        bucket: ood
+        tags: [command, ood, fast_switch]
+        overrides:
+          command:
+            lin_vel_x: [-1.6, 1.6]
+            lin_vel_y: [-1.6, 1.6]
+            ang_vel_z: [-1.6, 1.6]
+            resampling_time_s: [2.0, 4.0]
+
+  combined_ood:
+    description: "Representative multi-factor OOD combinations (not full Cartesian product)."
+    enabled: true
+    cases:
+      - name: combo_tail_push_friction
+        bucket: long_tail
+        tags: [combined, long_tail]
+        overrides:
+          friction:
+            static: [0.55, 0.85]
+            dynamic: [0.35, 0.65]
+          push:
+            enabled: true
+            interval_s: [6.0, 10.0]
+            vel_x: [-0.9, 0.9]
+            vel_y: [-0.9, 0.9]
+          command:
+            lin_vel_x: [-1.2, 1.2]
+            lin_vel_y: [-1.2, 1.2]
+            ang_vel_z: [-1.2, 1.2]
+          terrain:
+            difficulty_range: [0.4, 1.1]
+            rough_noise_scale: 1.2
+            boxes_height_scale: 1.2
+
+      - name: combo_ood_grid_1
+        bucket: ood
+        tags: [combined, ood, grid]
+        overrides:
+          grid: {x: 0.70, y: 1.30}
+          friction:
+            static: [0.4, 0.7]
+            dynamic: [0.25, 0.55]
+          command:
+            lin_vel_x: [-1.5, 1.5]
+            lin_vel_y: [-1.5, 1.5]
+            ang_vel_z: [-1.5, 1.5]
+          push_runtime:
+            enabled: true
+            pattern: periodic
+            start_step: 140
+            interval_steps: 180
+            magnitude_range: [0.9, 1.15]
+            direction_deg_range: [-180.0, 180.0]
+          terrain:
+            difficulty_range: [0.7, 1.3]
+            rough_noise_scale: 1.35
+            boxes_height_scale: 1.35
+
+      - name: combo_ood_grid_2
+        bucket: ood
+        tags: [combined, ood, grid]
+        overrides:
+          grid: {x: 0.35, y: 1.45}
+          friction:
+            static: [0.2, 0.45]
+            dynamic: [0.1, 0.35]
+          command:
+            lin_vel_x: [-1.6, 1.6]
+            lin_vel_y: [-1.6, 1.6]
+            ang_vel_z: [-1.6, 1.6]
+          push_runtime:
+            enabled: true
+            pattern: random_interval
+            start_step: 120
+            random_interval_range: [70, 150]
+            magnitude_range: [1.0, 1.3]
+            direction_deg_range: [-180.0, 180.0]
+          terrain:
+            difficulty_range: [0.8, 1.4]
+            rough_noise_scale: 1.45
+            boxes_height_scale: 1.45

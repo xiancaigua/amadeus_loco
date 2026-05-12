@@ -2,6 +2,18 @@
 
 This directory is the handoff hub for the Isaac Lab / Isaac Sim quadruped rough-terrain baseline added to the Amadeus external template.
 
+## Benchmark Docs Entry
+
+Structured benchmark documentation is available at:
+
+- [docs/benchmark/README.md](./benchmark/README.md)
+
+## SAC Docs Entry
+
+SAC baseline documentation is available at:
+
+- [docs/sac/README.md](./sac/README.md)
+
 ## Audit Summary
 
 - Background constraints came from the deleted-but-tracked `prj_background.md` and the live `prj_background_for_container.md`.

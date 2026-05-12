@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -24,6 +25,26 @@ parser.add_argument("--agent", type=str, default="skrl_sac_cfg_entry_point", hel
 parser.add_argument("--num_envs", type=int, default=None, help="Number of training environments.")
 parser.add_argument("--seed", type=int, default=None, help="Random seed.")
 parser.add_argument("--max_steps", type=int, default=None, help="Total environment interaction steps.")
+parser.add_argument(
+    "--memory_size",
+    type=int,
+    default=None,
+    help=(
+        "Replay buffer memory_size (first buffer dimension in skrl). "
+        "Actual transition capacity is memory_size * num_envs."
+    ),
+)
+parser.add_argument(
+    "--target_replay_transitions",
+    type=int,
+    default=2000000,
+    help=(
+        "If --memory_size is not set, auto-scale memory_size ~= target_replay_transitions / num_envs. "
+        "Helps avoid replay-buffer OOM on large num_envs."
+    ),
+)
+parser.add_argument("--batch_size", type=int, default=None, help="Override SAC batch_size.")
+parser.add_argument("--learning_starts", type=int, default=None, help="Override SAC learning_starts.")
 parser.add_argument("--update_frequency", type=int, default=None, help="Perform SAC update every N env steps.")
 parser.add_argument("--save_interval", type=int, default=None, help="Save checkpoint every N env steps.")
 parser.add_argument(
@@ -34,6 +55,12 @@ parser.add_argument(
         "Write train metrics every N environment steps. "
         "<=0 disables train-metrics export; if positive and larger than max_steps, it is clamped to max_steps."
     ),
+)
+parser.add_argument(
+    "--log_interval",
+    type=int,
+    default=2000,
+    help="Print one-line SAC training progress to terminal every N environment steps. <=0 disables console heartbeat.",
 )
 parser.add_argument("--eval_interval", type=int, default=None, help="Run periodic eval every N env steps.")
 parser.add_argument("--eval_episodes", type=int, default=None, help="Number of episodes per periodic eval.")
@@ -104,8 +131,11 @@ parser.add_argument("--dataset_chunk_episodes", type=int, default=128, help="Epi
 parser.add_argument(
     "--output_root",
     type=str,
-    default="outputs/loco_sac",
-    help="Output root directory. Layout: <output_root>/<run_name>/{ckpt,tb,metrics,data,video,params,logs}.",
+    default="outputs/train_quadruped_rough",
+    help=(
+        "Output root directory. "
+        "Default layout: <output_root>/sac/<run_name>/<timestamp>/{ckpt,tb,metrics,data,video,params,logs}."
+    ),
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -159,10 +189,16 @@ def _build_run_paths(run_dir: str) -> dict[str, str]:
 def _latest_run_dir(output_root: str) -> str | None:
     if not os.path.isdir(output_root):
         return None
-    run_dirs = [os.path.join(output_root, item) for item in os.listdir(output_root)]
-    run_dirs = [path for path in run_dirs if os.path.isdir(path)]
+    run_dirs: list[str] = []
+    for root, dirs, _ in os.walk(output_root):
+        if "ckpt" in dirs or "checkpoints" in dirs:
+            run_dirs.append(root)
     if not run_dirs:
-        return None
+        # fallback for flat legacy layouts
+        run_dirs = [os.path.join(output_root, item) for item in os.listdir(output_root)]
+        run_dirs = [path for path in run_dirs if os.path.isdir(path)]
+        if not run_dirs:
+            return None
     return max(run_dirs, key=os.path.getmtime)
 
 
@@ -172,21 +208,58 @@ def _resolve_resume_checkpoint(output_root: str, run_dir: str) -> str | None:
     if not args_cli.resume:
         return None
 
-    target_run_dir = run_dir
-    if args_cli.load_run:
-        target_run_dir = os.path.join(output_root, args_cli.load_run)
-    elif not os.path.isdir(target_run_dir):
-        latest = _latest_run_dir(output_root)
-        if latest is not None:
-            target_run_dir = latest
+    method_root = os.path.join(output_root, "sac")
+    experiment_root = os.path.join(method_root, args_cli.run_name)
+    legacy_root = os.path.abspath(os.path.join("outputs", "loco_sac"))
 
-    for ckpt_dir_name in ("ckpt", "checkpoints"):
-        ckpt_dir = os.path.join(target_run_dir, ckpt_dir_name)
-        if not os.path.isdir(ckpt_dir):
+    candidate_run_dirs: list[str] = []
+    if args_cli.load_run:
+        if os.path.isabs(args_cli.load_run):
+            candidate_run_dirs.append(args_cli.load_run)
+        else:
+            legacy_match = re.match(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(.+)$", args_cli.load_run)
+            if legacy_match:
+                legacy_ts = legacy_match.group(1)
+                legacy_exp = legacy_match.group(2)
+                candidate_run_dirs.extend(
+                    [
+                        os.path.join(method_root, legacy_exp, legacy_ts),
+                        os.path.join(experiment_root, legacy_ts),
+                    ]
+                )
+            candidate_run_dirs.extend(
+                [
+                    os.path.join(experiment_root, args_cli.load_run),
+                    os.path.join(method_root, args_cli.load_run),
+                    os.path.join(output_root, args_cli.load_run),
+                    os.path.join(legacy_root, args_cli.load_run),
+                ]
+            )
+    else:
+        candidate_run_dirs.append(run_dir)
+        for root in (experiment_root, method_root, output_root, legacy_root):
+            latest = _latest_run_dir(root)
+            if latest is not None:
+                candidate_run_dirs.append(latest)
+
+    # de-duplicate while preserving order
+    deduped_candidate_dirs: list[str] = []
+    seen = set()
+    for path in candidate_run_dirs:
+        abspath = os.path.abspath(path)
+        if abspath in seen:
             continue
-        checkpoint_path = latest_model_checkpoint(ckpt_dir)
-        if checkpoint_path is not None:
-            return checkpoint_path
+        seen.add(abspath)
+        deduped_candidate_dirs.append(abspath)
+
+    for target_run_dir in deduped_candidate_dirs:
+        for ckpt_dir_name in ("ckpt", "checkpoints"):
+            ckpt_dir = os.path.join(target_run_dir, ckpt_dir_name)
+            if not os.path.isdir(ckpt_dir):
+                continue
+            checkpoint_path = latest_model_checkpoint(ckpt_dir)
+            if checkpoint_path is not None:
+                return checkpoint_path
     return None
 
 
@@ -268,6 +341,51 @@ _runtime_max_steps = 2000000
 _runtime_train_metrics_interval = 2000
 
 
+def _resolve_memory_size(agent_cfg: dict, num_envs: int, batch_size: int) -> tuple[int, str]:
+    memory_cfg = agent_cfg.get("memory", {})
+    base_memory_size = int(memory_cfg.get("memory_size", 1000000))
+    if args_cli.memory_size is not None:
+        return max(int(args_cli.memory_size), max(1, batch_size)), "cli"
+
+    target_total = max(int(args_cli.target_replay_transitions), 1)
+    auto_scaled = max(target_total // max(num_envs, 1), 1)
+    resolved = min(base_memory_size, auto_scaled)
+    resolved = max(resolved, max(1, batch_size))
+    return resolved, "auto"
+
+
+def _fmt_metric(value) -> str:
+    if value is None:
+        return "nan"
+    try:
+        return f"{float(value):.4g}"
+    except (TypeError, ValueError):
+        return "nan"
+
+
+def _print_train_heartbeat(row: dict, *, step: int, start_time: float, max_steps: int):
+    elapsed_s = max(time.time() - start_time, 1e-6)
+    steps_per_s = step / elapsed_s
+    eta_s = (max_steps - step) / steps_per_s if steps_per_s > 0 else float("nan")
+    eta_min = eta_s / 60.0 if eta_s == eta_s else float("nan")
+    print(
+        "[TRAIN] "
+        f"step={step}/{max_steps} "
+        f"reward={_fmt_metric(row.get('mean_reward'))} "
+        f"ep_len={_fmt_metric(row.get('mean_episode_length'))} "
+        f"policy_loss={_fmt_metric(row.get('policy_loss'))} "
+        f"value_loss={_fmt_metric(row.get('value_loss'))} "
+        f"entropy_loss={_fmt_metric(row.get('entropy_loss'))} "
+        f"entropy_coef={_fmt_metric(row.get('entropy_coef'))} "
+        f"fall_rate={_fmt_metric(row.get('fall_rate'))} "
+        f"timeout_rate={_fmt_metric(row.get('time_out_rate'))} "
+        f"lin_track_rew={_fmt_metric(row.get('track_lin_vel_reward'))} "
+        f"sps={steps_per_s:.1f} "
+        f"eta_min={eta_min:.1f}",
+        flush=True,
+    )
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
     global _runtime_seed
@@ -314,20 +432,60 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
         env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.seed = _runtime_seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    resolved_num_envs = int(env_cfg.scene.num_envs)
 
     ChunkedHDF5DatasetFileHandler.max_episodes_per_file = args_cli.dataset_chunk_episodes
 
     output_root = os.path.abspath(args_cli.output_root)
+    method_root = os.path.join(output_root, "sac")
+    experiment_root = os.path.join(method_root, args_cli.run_name)
+    legacy_root = os.path.abspath(os.path.join("outputs", "loco_sac"))
     ensure_dir(output_root)
+    ensure_dir(method_root)
+    ensure_dir(experiment_root)
 
     if args_cli.resume and args_cli.load_run:
-        run_dir = os.path.join(output_root, args_cli.load_run)
+        if os.path.isabs(args_cli.load_run):
+            run_dir = args_cli.load_run
+        else:
+            legacy_match = re.match(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(.+)$", args_cli.load_run)
+            legacy_mapped = None
+            if legacy_match:
+                legacy_ts = legacy_match.group(1)
+                legacy_exp = legacy_match.group(2)
+                candidate_legacy_mapped = os.path.join(method_root, legacy_exp, legacy_ts)
+                if os.path.isdir(candidate_legacy_mapped):
+                    legacy_mapped = candidate_legacy_mapped
+                elif legacy_exp == args_cli.run_name:
+                    candidate_same_exp = os.path.join(experiment_root, legacy_ts)
+                    if os.path.isdir(candidate_same_exp):
+                        legacy_mapped = candidate_same_exp
+            candidate_new = os.path.join(experiment_root, args_cli.load_run)
+            candidate_method = os.path.join(method_root, args_cli.load_run)
+            candidate_flat = os.path.join(output_root, args_cli.load_run)
+            candidate_legacy = os.path.join(legacy_root, args_cli.load_run)
+            if legacy_mapped is not None:
+                run_dir = legacy_mapped
+            elif os.path.isdir(candidate_new):
+                run_dir = candidate_new
+            elif os.path.isdir(candidate_method):
+                run_dir = candidate_method
+            elif os.path.isdir(candidate_flat):
+                run_dir = candidate_flat
+            elif os.path.isdir(candidate_legacy):
+                run_dir = candidate_legacy
+            else:
+                run_dir = candidate_new
     elif args_cli.resume and not args_cli.load_run:
-        run_dir = _latest_run_dir(output_root) or os.path.join(
-            output_root, f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{args_cli.run_name}"
+        run_dir = (
+            _latest_run_dir(experiment_root)
+            or _latest_run_dir(method_root)
+            or _latest_run_dir(output_root)
+            or _latest_run_dir(legacy_root)
+            or os.path.join(experiment_root, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
         )
     else:
-        run_dir = os.path.join(output_root, f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{args_cli.run_name}")
+        run_dir = os.path.join(experiment_root, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
 
     run_paths = _build_run_paths(run_dir)
     for path in run_paths.values():
@@ -342,8 +500,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
     agent_cfg["trainer"]["timesteps"] = _runtime_max_steps
     agent_cfg["trainer"]["headless"] = bool(args_cli.headless)
     agent_cfg["trainer"]["close_environment_at_exit"] = False
+    agent_cfg.setdefault("memory", {})
     agent_cfg.setdefault("agent", {})
     agent_cfg["agent"].setdefault("experiment", {})
+    if args_cli.batch_size is not None:
+        agent_cfg["agent"]["batch_size"] = int(args_cli.batch_size)
+    if args_cli.learning_starts is not None:
+        ls = int(args_cli.learning_starts)
+        agent_cfg["agent"]["learning_starts"] = ls
+        agent_cfg["agent"]["random_timesteps"] = ls
+    resolved_batch_size = int(agent_cfg["agent"].get("batch_size", 2048))
+    resolved_memory_size, memory_size_source = _resolve_memory_size(agent_cfg, resolved_num_envs, resolved_batch_size)
+    agent_cfg["memory"]["memory_size"] = int(resolved_memory_size)
     agent_cfg["agent"]["experiment"]["directory"] = run_dir
     agent_cfg["agent"]["experiment"]["experiment_name"] = "tb"
     agent_cfg["agent"]["experiment"]["write_interval"] = _runtime_train_metrics_interval
@@ -357,13 +525,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
                 "task": args_cli.task,
                 "agent_entry_point": args_cli.agent,
                 "seed": _runtime_seed,
+                "num_envs": resolved_num_envs,
                 "max_steps": _runtime_max_steps,
                 "update_frequency": _runtime_update_frequency,
                 "save_interval": _runtime_save_interval,
                 "train_metrics_interval": _runtime_train_metrics_interval,
+                "log_interval": int(args_cli.log_interval),
                 "eval_interval": _runtime_eval_interval,
                 "eval_episodes": _runtime_eval_episodes,
                 "eval_num_envs": _runtime_eval_num_envs,
+                "memory_size": resolved_memory_size,
+                "memory_size_source": memory_size_source,
+                "target_replay_transitions": int(args_cli.target_replay_transitions),
+                "batch_size": int(agent_cfg["agent"].get("batch_size", -1)),
+                "learning_starts": int(agent_cfg["agent"].get("learning_starts", -1)),
             },
             f,
             indent=2,
@@ -412,12 +587,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
     obs, infos = env.reset()
     states = env.state()
 
-    print(f"[INFO] Logging experiment in directory: {output_root}")
-    print(f"Exact experiment name requested from command line: {os.path.basename(run_dir)}")
+    print(f"[INFO] Logging experiment root: {method_root}")
+    print(f"[INFO] SAC experiment root: {experiment_root}")
+    print(f"[INFO] Current SAC run directory: {run_dir}")
     print(
         f"[INFO] SAC runtime: max_steps={_runtime_max_steps}, update_frequency={_runtime_update_frequency}, "
         f"save_interval={_runtime_save_interval}, train_metrics_interval={_runtime_train_metrics_interval}, "
-        f"eval_interval={_runtime_eval_interval}."
+        f"log_interval={args_cli.log_interval}, eval_interval={_runtime_eval_interval}."
+    )
+    print(
+        "[INFO] SAC replay buffer config: "
+        f"memory_size={resolved_memory_size} ({memory_size_source}), "
+        f"num_envs={resolved_num_envs}, "
+        f"effective_capacity={resolved_memory_size * resolved_num_envs}, "
+        f"batch_size={resolved_batch_size}."
     )
 
     start_time = time.time()
@@ -453,6 +636,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: dict):
         obs, states = next_obs, next_states
 
         step = timestep + 1
+        if args_cli.log_interval > 0 and step % args_cli.log_interval == 0:
+            row = build_sac_train_metrics_row(agent.tracking_data, step)
+            _print_train_heartbeat(row, step=step, start_time=start_time, max_steps=_runtime_max_steps)
+
         if _runtime_save_interval > 0 and step % _runtime_save_interval == 0:
             checkpoint_path = os.path.join(run_paths["ckpt"], f"model_{step}.pt")
             agent.save(checkpoint_path)
